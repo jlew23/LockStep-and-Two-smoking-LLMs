@@ -8,7 +8,7 @@
 
 [![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen?style=flat-square)](#-quick-start)
 [![Tested with DeepSeek](https://img.shields.io/badge/tested%20with-DeepSeek%20Harness-4D6BFE?style=flat-square)](#-the-numbers)
-[![Tests](https://img.shields.io/badge/tests-31-brightgreen?style=flat-square)](#-quick-start)
+[![Tests](https://img.shields.io/badge/tests-41-brightgreen?style=flat-square)](#-quick-start)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?style=flat-square&logo=node.js&logoColor=white)](#requirements)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
@@ -33,7 +33,7 @@ LockStep fixes all four with two drop-in plugins.
 
 | Plugin | What it does |
 |---|---|
-| **`verdent-report`** | Strict report schema, auto-downgrades fake `done` to `partial`, "Record, Don't Refuse" trimming, atomic crash-safe writes, and a self-healing playbook library |
+| **`verdent-report`** | Strict report schema, auto-downgrades fake `done` to `partial`, **verifies file claims against the real disk**, "Record, Don't Refuse" trimming, atomic crash-safe writes, and a self-healing playbook library |
 | **`model-fallback`** | Turn-boundary model switching with **fleet-wide outage memory**: once one agent hits a 429, every agent switches before wasting a call |
 
 ## 📊 The numbers
@@ -88,6 +88,27 @@ The switch happens only **at turn boundaries**. DeepSeek fixes the model during 
 ### 4. Verified playbooks only
 
 A playbook is saved only when a Verifier passes **100%** of the worker's criteria. Any later FAIL retires it to `playbooks/.retired/`. Bad steps never make it into the library.
+
+### 5. Check, don't trust
+
+A schema can prove a report is *filled in*, not that it is *true*. So for any claim about a file, an agent attaches `checks` and **LockStep verifies them against the real disk**:
+
+| Check | Verifies |
+|---|---|
+| `exists` | the path exists |
+| `equals` | the whole file is exactly `text` (newline included) |
+| `contains` | the file contains `text` |
+| `size` | the file is exactly `bytes` long |
+| `sha256` | the file hashes to the given digest |
+| `hex` | the whole file is exactly these bytes |
+
+- **A wrong claim is recorded as not met**, the report drops from `done` to `partial`, and the mistake is logged as a lesson. Example: an agent claims a newline is hex `10`; LockStep answers `first difference at byte 1: the file has 0a, you claimed 10`.
+- **The verifier can't be talked into it.** When a verdict is saved, the worker's file claims are re-checked on disk. If one no longer holds, a `PASS` becomes a `FAIL` and its playbook is retired.
+- **Confined to the workspace.** Paths outside the session's workspace folder (including `..` and symlink escapes) are refused, and a file outside it is never read.
+- **Fails closed.** Malformed checks are refused with a one-line fix, and if the workspace folder can't be determined the claim counts as not verified.
+- **Claims without checks** are accepted but marked unverified. Set `requireChecks: true` in the plugin config to record them as not met.
+
+What it still can't do: verify claims that aren't about files (for example "the tests pass"), so those stay "unverified" unless a check covers a file the claim rests on. Set `checkRoot` in the config if your host can't report the session's workspace.
 
 ## 🚀 Quick start
 
@@ -165,8 +186,8 @@ Put these short rules in your role prompts to get the most out of the guardrails
 | Role | Directive |
 |---|---|
 | **Manager** | Start tasks with `task_id: <unique_id>` and 3–7 verifiable criteria. Call `find_playbooks_v1` and `recent_lessons_v1` before planning. Read results via `read_task_report_v1`. |
-| **Worker** | Read referenced guides with `read_playbook_v1`. Keep the criteria in your active checklist. Submit via `submit_worker_report_v1` with concrete evidence. |
-| **Verifier** | Check every criterion. Grade all items with `submit_verdict_v1`. |
+| **Worker** | Read referenced guides with `read_playbook_v1`. Keep the criteria in your active checklist. Submit via `submit_worker_report_v1` with concrete evidence, and add `checks` (`exists`, `equals`, `contains`, `size`, `sha256`, `hex`) for every claim about a file. |
+| **Verifier** | Check every criterion. Grade all items with `submit_verdict_v1`, using `checks` where you can. |
 
 ## 📁 Repo layout
 

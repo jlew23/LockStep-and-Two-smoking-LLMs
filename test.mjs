@@ -26,6 +26,6 @@ for (const [name, code] of Object.entries(stubs)) {
   await writeFile(join(dir, 'package.json'), JSON.stringify({ name: `@deepseek-ai/${name}`, type: 'module', main: 'index.js' }))
   await writeFile(join(dir, 'index.js'), code)
 }
-await cp(join(root, 'tests', 'smoke.test.ts'), join(tmp, 'smoke.test.ts'))
-// smoke.test.ts imports ./tests/fake-host.mjs, copied above with tests/
-run(['smoke.test.ts'], tmp)
+for (const f of ['smoke.test.ts', 'checks.test.ts']) await cp(join(root, 'tests', f), join(tmp, f))
+// both import ./tests/fake-host.mjs, copied above with tests/
+run(['smoke.test.ts', 'checks.test.ts'], tmp)

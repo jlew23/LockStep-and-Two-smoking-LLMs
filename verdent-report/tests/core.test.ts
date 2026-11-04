@@ -1,9 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  NotSaved, buildVerdict, buildWorkerReport, criterionKey, lessonsEntry, makeReportId, missingReportReminder, normalizeTaskId,
-  parsePlaybook, playbookMarkdown, rankPlaybooks, renderPlaybookList, renderTaskView, taskIdInText, ungradedCriteria, words,
+  MAX_READ, NotSaved, Trimmer, buildVerdict, buildWorkerReport, cleanChecks, criterionKey, extractChecks, hexToBytes, judgeCheck,
+  lessonsEntry, makeReportId, missingReportReminder, normalizeTaskId, parsePlaybook, playbookMarkdown, rankPlaybooks,
+  renderPlaybookList, renderTaskView, taskIdInText, ungradedCriteria, words,
 } from '../src/core.ts'
+import type { Check, FileFacts } from '../src/core.ts'
 
 const now = new Date('2026-10-31T12:34:56Z')
 const rand = () => 0.5
@@ -146,4 +148,92 @@ test('reminders and task id detection', () => {
   assert.equal(taskIdInText('the task idea was good'), undefined)
   assert.equal(taskIdInText('Which task id is stale?'), undefined)
   assert.equal(taskIdInText('Task ID: `T13`.'), 't13')
+})
+
+// ---- checks: claims verified against real files ---------------------------------
+
+const enc = (s: string) => new TextEncoder().encode(s)
+const file = (text: string): FileFacts => ({ exists: true, isFile: true, size: enc(text).length, bytes: enc(text) })
+const verifyOpts = (...results: ({ ok: boolean; detail: string; kind?: string; path?: string }[] | undefined)[]) =>
+  ({ require: false, results: results.map(r => r?.map(x => ({ kind: 'equals' as const, path: 'f.txt', ...x }))) })
+
+test('hex: the model said 10 for a newline, the file has 0a', () => {
+  const check: Check = { kind: 'hex', path: 'count.txt', hex: '31 10' }
+  const clean = cleanChecks([check], new Trimmer(), 0)
+  assert.equal(clean[0]!.hex, '3110', 'spaces are accepted and removed')
+  const r = judgeCheck(clean[0]!, file('1\n'))
+  assert.equal(r.ok, false)
+  assert.match(r.detail, /first difference at byte 1: the file has 0a, you claimed 10/)
+  assert.equal(judgeCheck({ kind: 'hex', path: 'count.txt', hex: '310a' }, file('1\n')).ok, true)
+})
+
+test('checks: each kind passes when true and says why when false', () => {
+  const f = file('LockStep online\n')
+  const ok = (c: Check) => judgeCheck(c, f)
+  assert.equal(ok({ kind: 'exists', path: 'a' }).ok, true)
+  assert.equal(ok({ kind: 'equals', path: 'a', text: 'LockStep online\n' }).ok, true)
+  assert.match(ok({ kind: 'equals', path: 'a', text: 'LockStep online' }).detail, /the file is 16 bytes, you claimed 15; the file starts with "LockStep online/)
+  assert.equal(ok({ kind: 'contains', path: 'a', text: 'online' }).ok, true)
+  assert.match(ok({ kind: 'contains', path: 'a', text: 'offline' }).detail, /text not found/)
+  assert.equal(ok({ kind: 'size', path: 'a', bytes: 16 }).ok, true)
+  assert.match(ok({ kind: 'size', path: 'a', bytes: 15 }).detail, /the file is 16 bytes, you claimed 15/)
+  const sha = 'a'.repeat(64)
+  assert.equal(judgeCheck({ kind: 'sha256', path: 'a', sha256: sha }, { ...f, sha256: sha }).ok, true)
+  assert.equal(judgeCheck({ kind: 'sha256', path: 'a', sha256: sha }, { ...f, sha256: 'b'.repeat(64) }).ok, false)
+  assert.equal(judgeCheck({ kind: 'exists', path: 'a' }, { exists: false, isFile: false, size: 0 }).detail, 'no such file or folder')
+  assert.match(judgeCheck({ kind: 'equals', path: 'a', text: 'x' }, { exists: true, isFile: false, size: 0 }).detail, /folder, not a file/)
+  assert.match(judgeCheck({ kind: 'equals', path: 'a', text: 'x' }, { exists: true, isFile: true, size: MAX_READ + 1 }).detail, /over the \d+ byte limit.*size or sha256/)
+})
+
+test('checks: malformed checks are refused, never silently ignored', () => {
+  const bad = (check: unknown) => cleanChecks([check], new Trimmer(), 2)
+  assert.throws(() => bad({ kind: 'magic', path: 'a' }), /criteria\[2\]\.checks\[0\]\.kind "magic" is not valid.*Use one of: exists/)
+  assert.throws(() => bad({ kind: 'exists' }), /has no path/)
+  assert.throws(() => bad({ kind: 'equals', path: 'a' }), /needs a text/)
+  assert.throws(() => bad({ kind: 'contains', path: 'a', text: '' }), /needs a text/)
+  assert.throws(() => bad({ kind: 'size', path: 'a', bytes: 1.5 }), /whole number/)
+  assert.throws(() => bad({ kind: 'sha256', path: 'a', sha256: 'abc' }), /64-digit/)
+  assert.throws(() => bad({ kind: 'hex', path: 'a', hex: '4g' }), /not valid hex/)
+  assert.throws(() => bad({ kind: 'hex', path: 'a', hex: '123' }), /not valid hex/)
+  assert.throws(() => cleanChecks('nope', new Trimmer(), 0), /not a list/)
+  assert.deepEqual(cleanChecks(undefined, new Trimmer(), 0), [])
+  assert.deepEqual([...hexToBytes('0x4c, 6F:0a')!], [0x4c, 0x6f, 0x0a])
+  const many = Array.from({ length: 12 }, () => ({ kind: 'exists', path: 'a' }))
+  const t = new Trimmer()
+  assert.equal(cleanChecks(many, t, 0).length, 10)
+  assert.match(t.notes.join(), /kept first 10 of 12/)
+  assert.deepEqual(extractChecks([{ criterion: 'a', met: true, evidence: 'x' }, { criterion: 'b', met: true, evidence: 'x', checks: [{ kind: 'exists', path: 'p' }] }] as never).map(l => l.length), [0, 1])
+})
+
+test('a claim that fails verification is recorded as not met, and a done report becomes partial', () => {
+  const criteria = [
+    { criterion: 'file exists', met: true, evidence: 'ls shows it', checks: [{ kind: 'exists', path: 'f.txt' }] },
+    { criterion: 'file says hi', met: true, evidence: 'cat shows hi', checks: [{ kind: 'equals', path: 'f.txt', text: 'hi' }] },
+  ]
+  assert.equal(worker({ criteria }).report.status, 'done', 'without verification results nothing is judged')
+  const out = buildWorkerReport({ task_id: 't1', status: 'done', summary: 'x', criteria } as never, now, rand,
+    verifyOpts([{ ok: true, detail: 'exists', kind: 'exists' }], [{ ok: false, detail: 'first difference at byte 0: the file has 68, you claimed 6a' }]))
+  assert.equal(out.report.status, 'partial')
+  const [a, b] = out.report.criteria
+  assert.equal(a!.met, true)
+  assert.equal(a!.verified, 'passed')
+  assert.equal(b!.met, false)
+  assert.equal(b!.verified, 'failed')
+  assert.match(b!.evidence, /^FAILED VERIFICATION: equals f\.txt: first difference at byte 0.*\(claimed: cat shows hi\)/)
+  assert.match(out.changes.join(), /"file says hi" failed verification.*recorded as not met/)
+  assert.equal(b!.check_results![0]!.ok, false)
+})
+
+test('claims without checks are marked unverified; strict mode records them as not met', () => {
+  const plain = [{ criterion: 'looks good', met: true, evidence: 'I looked' }]
+  const loose = buildWorkerReport({ task_id: 't1', status: 'done', summary: 'x', criteria: plain } as never, now, rand, verifyOpts(undefined))
+  assert.equal(loose.report.criteria[0]!.verified, 'none')
+  assert.equal(loose.report.status, 'done')
+  const strict = buildWorkerReport({ task_id: 't1', status: 'done', summary: 'x', criteria: plain } as never, now, rand, { ...verifyOpts(undefined), require: true })
+  assert.equal(strict.report.criteria[0]!.met, false)
+  assert.equal(strict.report.status, 'partial')
+  assert.match(strict.report.criteria[0]!.evidence, /^NO MACHINE-CHECKABLE PROOF/)
+  const v = buildVerdict({ task_id: 't1', verdict: 'PASS', criteria: [{ criterion: 'c', met: true, evidence: 'x', checks: [{ kind: 'exists', path: 'f' }] }] } as never, null, now,
+    verifyOpts([{ ok: false, detail: 'no such file or folder', kind: 'exists' }]))
+  assert.equal(v.verdict.verdict, 'FAIL', "a verifier's own failed check turns PASS into FAIL")
 })

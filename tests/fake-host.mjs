@@ -9,7 +9,7 @@
 //   retry in that step; if an 'agent/request' listener proposes another provider/model the host THROWS.
 // - Message kinds: a Manager's first task to a child arrives as 'user'; follow-ups as 'agent-message'
 //   (with senderSessionId); a finished child reaches its parent as 'subagent-settled'. Content is [{type:'text',text}].
-export function createHost({ presets = {} } = {}) {
+export function createHost({ presets = {}, cwd } = {}) {
   const listeners = {}
   const tools = new Map()
   const logs = []
@@ -28,6 +28,8 @@ export function createHost({ presets = {} } = {}) {
     },
     get(name) {
       if (name === 'agentPresets') return { composedPreset: c => presets[c?.agentId] }
+      // Like the real workingDirectory service: the session's workspace folder for an agent.
+      if (name === 'workingDirectory' && cwd) return { ensure: async () => cwd }
       return undefined
     },
     logger: { info: (...a) => logs.push(['info', ...a]), warn: (...a) => logs.push(['warn', ...a]) },

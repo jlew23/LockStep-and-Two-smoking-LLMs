@@ -97,8 +97,9 @@ Testing used a multi-agent review setup that burned ~2.6 million tokens across 4
 
 ```console
 $ node build.mjs && node test.mjs
-✔ [core.test.ts]   20 unit tests passing (100%)
-✔ [smoke.test.ts]  11 integration tests passing (100%)
+✔ [core.test.ts]    25 unit tests passing (100%)
+✔ [smoke.test.ts]   11 integration tests passing (100%)
+✔ [checks.test.ts]   5 evidence-check tests passing (100%)
 ```
 
 - ✔ Zero external npm dependencies

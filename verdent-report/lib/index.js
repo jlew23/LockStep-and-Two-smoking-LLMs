@@ -27,15 +27,16 @@
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
                                                          
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { randomUUID } from 'node:crypto'
-import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { appendFile, mkdir, open, readdir, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import {
-  NotSaved, VERDICTS, WORKER_STATUSES, buildVerdict, buildWorkerReport, clip, describeInput, indexPlaybook, lessonsEntry,
-  missingReportReminder, normalizeTaskId, playbookMarkdown, rankPlaybooks, renderLessons, renderPlaybookList, renderTaskView,
-  renderVerdictSaved, renderWorkerSaved, shortList, taskIdInText, ungradedCriteria, words,
+  CHECK_KINDS, LIMITS, MAX_READ, NotSaved, VERDICTS, WORKER_STATUSES, buildVerdict, buildWorkerReport, clip, describeInput, extractChecks,
+  indexPlaybook, judgeCheck, lessonsEntry, missingReportReminder, needsOf, normalizeTaskId, playbookMarkdown, rankPlaybooks, renderLessons,
+  renderPlaybookList, renderTaskView, renderVerdictSaved, renderWorkerSaved, shortList, taskIdInText, ungradedCriteria, words,
 } from './core.js'
-                                                                                                         
+                                                                                                                                        
 
                                        
                               
@@ -49,7 +50,7 @@ export const inject = ['tools']
                                                             
 
                          
-                                                                                          
+                                                                                           
                    
                                           
             
@@ -57,6 +58,14 @@ export const inject = ['tools']
                                  
                                                                                              
                        
+     
+                                                                                 
+                                                                             
+                                                              
+     
+                         
+                                                                                                                  
+                    
  
 
 const ROLES         = ['worker', 'verifier', 'manager', 'all']
@@ -71,7 +80,16 @@ function checkConfig(config        )                   {
   }
   const maxReminders = config.maxReminders ?? 1
   if (!Number.isInteger(maxReminders) || maxReminders < 0) throw new Error(`${prefix}: maxReminders must be a whole number >= 0`)
-  return { memoryDir: config.memoryDir.trim(), role: config.role, requireReportPresets: presets.map(p => p.trim()), maxReminders }
+  const requireChecks = config.requireChecks ?? false
+  if (typeof requireChecks !== 'boolean') throw new Error(`${prefix}: requireChecks must be true or false`)
+  const checkRoot = config.checkRoot ?? ''
+  if (typeof checkRoot !== 'string' || (checkRoot.trim() !== '' && !isAbsolute(checkRoot.trim()))) {
+    throw new Error(`${prefix}: checkRoot must be a full folder path, e.g. C:\\Users\\<you>\\work`)
+  }
+  return {
+    memoryDir: config.memoryDir.trim(), role: config.role, requireReportPresets: presets.map(p => p.trim()), maxReminders,
+    requireChecks, checkRoot: checkRoot.trim(),
+  }
 }
 
 // ---- files ------------------------------------------------------------------
@@ -176,6 +194,19 @@ const TASK_MESSAGE_KINDS = new Set(['user', 'agent-message'])
 
 // ---- tool definitions -------------------------------------------------------
 
+const checkItems = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    kind: { type: 'string', required: true, enum: [...CHECK_KINDS], description: 'exists | equals (whole file is text) | contains | size (bytes) | sha256 | hex (whole file is these bytes)' },
+    path: { type: 'string', required: true, description: 'File path, relative to the workspace.' },
+    text: { type: 'string', description: 'For equals / contains: the exact text, newline included.' },
+    bytes: { type: 'number', description: 'For size: the exact size in bytes.' },
+    sha256: { type: 'string', description: 'For sha256: the 64-digit lowercase hex digest.' },
+    hex: { type: 'string', description: 'For hex: the whole file as hex bytes, e.g. "4c 6f 0a".' },
+  },
+}         
+
 const criterionItems = {
   type: 'object',
   additionalProperties: false,
@@ -183,6 +214,11 @@ const criterionItems = {
     criterion: { type: 'string', required: true },
     met: { type: 'boolean', required: true },
     evidence: { type: 'string', required: true, description: 'Proof. Empty only if met is false.' },
+    checks: {
+      type: 'array',
+      items: checkItems,
+      description: 'Claims about files that LockStep verifies against the real disk. A failed check records the criterion as not met. Use for any file-based claim.',
+    },
   },
 }         
 
@@ -263,6 +299,90 @@ export async function apply(ctx         , rawConfig        )                {
     return [...index.values()].map(v => v.entry)
   }
 
+  // ---- checks: verify claims against the real files ----------------------------
+
+  /** The session's workspace folder, from the host's workingDirectory service, else the configured fallback. */
+  async function workspaceRoot(agent                   , signal                         )                              {
+    try {
+      const wd = (ctx                                                  ).get?.('workingDirectory')   
+                                                                                       
+      if (wd?.ensure && agent) {
+        const cwd = await wd.ensure(agent, signal ?? new AbortController().signal)
+        if (typeof cwd === 'string' && cwd !== '') return cwd
+      }
+    } catch {
+      // fall through to the configured root
+    }
+    return config.checkRoot !== '' ? config.checkRoot : undefined
+  }
+
+  const inside = (root        , path        )          => {
+    const rel = relative(root, path)
+    return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+  }
+
+  async function sha256Of(path        )                  {
+    const hash = createHash('sha256')
+    for await (const chunk of createReadStream(path)) hash.update(chunk          )
+    return hash.digest('hex')
+  }
+
+  /** Run one check. Never throws: any problem becomes a failed check, so a claim is never accepted by accident. */
+  async function runOne(check       , rootReal        )                       {
+    const fail = (detail        )              => ({ kind: check.kind, path: check.path, ok: false, detail })
+    try {
+      const abs = resolve(rootReal, check.path)
+      if (!inside(rootReal, abs)) return fail('the path is outside the workspace')
+      let real        
+      try {
+        real = await realpath(abs)
+      } catch (error) {
+        if ((error                         ).code === 'ENOENT') return judgeCheck(check, { exists: false, isFile: false, size: 0 })
+        throw error
+      }
+      if (!inside(rootReal, real)) return fail('the path leads outside the workspace')
+      const st = await stat(real)
+      const facts            = { exists: true, isFile: st.isFile(), size: st.size }
+      if (facts.isFile) {
+        const need = needsOf(check)
+        if (need === 'bytes' && st.size <= MAX_READ) facts.bytes = await readFile(real)
+        else if (need === 'sha256') facts.sha256 = await sha256Of(real)
+      }
+      return judgeCheck(check, facts)
+    } catch (error) {
+      return fail(`could not check (${(error                         ).code ?? 'error'})`)
+    }
+  }
+
+  /**
+   * Run every check of every criterion. Results line up with the input by
+   * position (undefined where a criterion has no checks). `root` pins the
+   * folder, so a verdict re-checks the worker's claims where the worker made them.
+   */
+  async function runChecks(
+    all           , agent                   , signal                         , root         ,
+  )                                                                     {
+    if (!all.some(list => list.length > 0)) return { results: all.map(() => undefined) }
+    const base = root ?? await workspaceRoot(agent, signal)
+    let rootReal                    
+    try {
+      if (base) rootReal = await realpath(base)
+    } catch {
+      rootReal = undefined
+    }
+    const results = await Promise.all(all.map(async (list) => {
+      if (list.length === 0) return undefined
+      if (!rootReal) {
+        return list.map((c)              => ({
+          kind: c.kind, path: c.path, ok: false,
+          detail: 'the workspace folder is unknown, so this could not be verified (set checkRoot in the verdent-report config)',
+        }))
+      }
+      return Promise.all(list.map(c => runOne(c, rootReal )))
+    }))
+    return { results, root: rootReal }
+  }
+
   const has = (role      ) => config.role === role || config.role === 'all'
   const register = (tool                                          ) => {
     try {
@@ -278,7 +398,8 @@ export async function apply(ctx         , rawConfig        )                {
       description:
         'Submit your final report for a task. Call once, as your last action, then stop. '
         + 'status: "done" = every criterion met; "partial" = some not met; "blocked" = you need help (fill open_questions). '
-        + 'Copy each criterion exactly as given. met:true needs evidence (command and result, or file:line).',
+        + 'Copy each criterion exactly as given. met:true needs evidence (command and result, or file:line). '
+        + 'For any claim about a file, add checks (exists, equals, contains, size, sha256, hex): they are verified against the real file, and a wrong claim is recorded as not met.',
       parameters: {
         task_id: { type: 'string', required: true, description: 'Task id from the Manager, exactly.' },
         status: { type: 'string', required: true, enum: [...WORKER_STATUSES] },
@@ -291,10 +412,15 @@ export async function apply(ctx         , rawConfig        )                {
       },
       output: textOutput,
       execute: (args, exec) => guard(async () => {
-        const { report, trimmed, changes } = buildWorkerReport(args                                           , new Date(), Math.random)
+        const input = args                                           
+        // Verify the claimed files on disk first; a wrong claim is recorded as not met.
+        const checked = await runChecks(extractChecks(input.criteria), exec.agent, exec.signal)
+        const { report, trimmed, changes } = buildWorkerReport(input, new Date(), Math.random, { results: checked.results, require: config.requireChecks })
+        if (checked.root && report.criteria.some(c => c.checks)) report.check_root = checked.root
         const warnings           = []
-        // Lessons first, so a later failure cannot lose them.
-        const lessonProblem = await appendLessons(lessonsEntry(today(), report.report_id, `worker, ${report.status}`, report.lessons))
+        // Lessons first, so a later failure cannot lose them. Caught false claims become lessons too.
+        const caught = report.criteria.filter(c => c.verified === 'failed').map(c => `A claim failed verification: "${clip(c.criterion, 80)}": ${clip(c.evidence, 200)}`)
+        const lessonProblem = await appendLessons(lessonsEntry(today(), report.report_id, `worker, ${report.status}`, [...report.lessons, ...caught]))
         if (lessonProblem) warnings.push(lessonProblem)
         // A new report makes any older verdict for this task stale: archive it.
         const old = await readJson               (reportPath(report.task_id, 'verdict'))
@@ -358,7 +484,21 @@ export async function apply(ctx         , rawConfig        )                {
         const taskId = normalizeTaskId(String(args.task_id))
         const worker = await readJson              (reportPath(taskId, 'worker'))
         const report = worker.value
-        const { verdict, trimmed, changes } = buildVerdict(args                                      , report?.report_id ?? null, new Date())
+        const input = args                                      
+        // The verifier's own checks run where the verifier works.
+        const own = await runChecks(extractChecks(input.criteria), exec.agent, exec.signal)
+        const { verdict, trimmed, changes } = buildVerdict(input, report?.report_id ?? null, new Date(), { results: own.results, require: false })
+        // Independent of what the verifier says: re-check the worker's own file claims where the worker made them.
+        const claimed = (report?.criteria ?? []).filter(c => c.met && c.checks && c.checks.length > 0)
+        if (claimed.length > 0) {
+          const again = await runChecks(claimed.map(c => c.checks ), exec.agent, exec.signal, report?.check_root)
+          const broken = claimed.flatMap((c, i) => (again.results[i] ?? []).filter(r => !r.ok).map(r => `"${clip(c.criterion, 50)}": ${r.kind} ${r.path}: ${r.detail}`))
+          if (broken.length > 0) {
+            if (verdict.verdict === 'PASS') changes.push(`recorded as FAIL: ${broken.length} of the worker's file claims do not hold on disk`)
+            verdict.verdict = 'FAIL'
+            verdict.notes = clip(`${verdict.notes ? `${verdict.notes} ` : ''}Worker claims re-checked at grading and failed: ${shortList(broken, 3)}.`, LIMITS.notes)
+          }
+        }
         await mkdir(dirs.reports, { recursive: true })
         try {
           await atomicWrite(reportPath(taskId, 'verdict'), JSON.stringify(verdict))

@@ -18,7 +18,7 @@ test('report flow: report, PASS saves a playbook named by report id, Manager see
   await report.apply(host.ctx, { memoryDir: dir, role: 'all' })
   const w = createAgent('w')
   const saved = await loop.tool(host, 'submit_worker_report_v1', { task_id: 'Shot-12', status: 'done', summary: 'Render shot 12 in Unreal', criteria: [crit('frame exists')], lessons: ['close Storyteller first to free RAM'], playbook_steps: ['open level', 'render'] }, w)
-  assert.match(saved, /^Saved: shot-12 done, 1\/1 met\. You are done/)
+  assert.match(saved, /^Saved: shot-12 done, 1\/1 met\. 1 met without checks \(unverified\)\. You are done/)
   const v = await loop.tool(host, 'submit_verdict_v1', { task_id: 'shot-12', verdict: 'PASS', criteria: [crit('Frame exists.')] }, createAgent('v'))
   assert.match(v, /PASS, 1\/1 pass\. Playbook saved: shot-12-\d{14}-[0-9a-f]{8}\./)
   const [pbName] = await readdir(join(dir, 'playbooks')).then(n => n.filter(x => x.endsWith('.md')))
