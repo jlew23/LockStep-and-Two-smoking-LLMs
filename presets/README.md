@@ -2,7 +2,7 @@
 
 Six ready-made setups of the Verdent add-ons, each chosen from what the squad review measured. Pick one, copy its rows, and replace the preset ids with yours from `verdent-presets.patch.yml`. Test in `verdent-test` first.
 
-Assumed memory folder: `C:\Users\Luda\.dsh\manager-memory`.
+Assumed memory folder: `C:\Users\<you>\.dsh\manager-memory`.
 
 ## Pick one
 
@@ -51,15 +51,15 @@ Per-preset rows (one in each preset's plugin list):
 # Manager preset
 - id: verdent-report
   name: '@jarvis/dsh-verdent-report'
-  config: { memoryDir: 'C:\Users\Luda\.dsh\manager-memory', role: manager }
+  config: { memoryDir: 'C:\Users\<you>\.dsh\manager-memory', role: manager }
 # Worker preset
 - id: verdent-report
   name: '@jarvis/dsh-verdent-report'
-  config: { memoryDir: 'C:\Users\Luda\.dsh\manager-memory', role: worker, requireReportPresets: [worker-verdent], maxReminders: 1 }
+  config: { memoryDir: 'C:\Users\<you>\.dsh\manager-memory', role: worker, requireReportPresets: [worker-verdent], maxReminders: 1 }
 # Verifier preset
 - id: verdent-report
   name: '@jarvis/dsh-verdent-report'
-  config: { memoryDir: 'C:\Users\Luda\.dsh\manager-memory', role: verifier, requireReportPresets: [verifier-verdent], maxReminders: 1 }
+  config: { memoryDir: 'C:\Users\<you>\.dsh\manager-memory', role: verifier, requireReportPresets: [verifier-verdent], maxReminders: 1 }
 ```
 
 Global row:
@@ -82,7 +82,7 @@ As Team, but:
 
 ```yaml
 # Worker preset
-  config: { memoryDir: 'C:\Users\Luda\.dsh\manager-memory', role: worker, maxReminders: 0 }
+  config: { memoryDir: 'C:\Users\<you>\.dsh\manager-memory', role: worker, maxReminders: 0 }
 # Global
       config: { chains: { deepseek-v4-pro: [deepseek-flash] } }
 ```

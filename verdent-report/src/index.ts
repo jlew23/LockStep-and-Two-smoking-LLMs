@@ -48,7 +48,7 @@ export const inject = ['tools']
 export type Role = 'worker' | 'verifier' | 'manager' | 'all'
 
 export interface Config {
-  /** Folder for reports, lessons and playbooks, e.g. C:\Users\Luda\.dsh\manager-memory */
+  /** Folder for reports, lessons and playbooks, e.g. C:\Users\<you>\.dsh\manager-memory */
   memoryDir: string
   /** worker | verifier | manager | all */
   role: Role

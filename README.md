@@ -10,7 +10,7 @@
 [![Tested with DeepSeek](https://img.shields.io/badge/tested%20with-DeepSeek%20Harness-4D6BFE?style=flat-square)](#-the-numbers)
 [![Tests](https://img.shields.io/badge/tests-31-brightgreen?style=flat-square)](#-quick-start)
 [![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?style=flat-square&logo=node.js&logoColor=white)](#requirements)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](#license)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE)
 
 **-99.8%** manager context &nbsp;·&nbsp; **0 / 500** failed parallel writes &nbsp;·&nbsp; **0 / 200** lessons lost &nbsp;·&nbsp; **0** wasted retries on outages
 
@@ -107,7 +107,7 @@ node test.mjs
 
 ### 2. Mount in your harness presets
 
-Add the plugins to your DeepSeek Harness config (for example `presets.patch.yml`):
+Add the plugins to your DeepSeek Harness config (for example `presets.patch.yml`). Replace `<you>` with your Windows username, and use a full path for `memoryDir`: the plugin does not expand `~`.
 
 <details open>
 <summary><b>Per-preset plugins</b> (Manager / Worker / Verifier)</summary>
@@ -117,7 +117,7 @@ Add the plugins to your DeepSeek Harness config (for example `presets.patch.yml`
 - id: verdent-report
   name: '@jarvis/dsh-verdent-report'
   config:
-    memoryDir: '~/.dsh/manager-memory'
+    memoryDir: 'C:\Users\<you>\.dsh\manager-memory'
     role: manager
     requireReportPresets: [manager-verdent]
 
@@ -125,7 +125,7 @@ Add the plugins to your DeepSeek Harness config (for example `presets.patch.yml`
 - id: verdent-report
   name: '@jarvis/dsh-verdent-report'
   config:
-    memoryDir: '~/.dsh/manager-memory'
+    memoryDir: 'C:\Users\<you>\.dsh\manager-memory'
     role: worker
     requireReportPresets: [worker-verdent]
 
@@ -133,7 +133,7 @@ Add the plugins to your DeepSeek Harness config (for example `presets.patch.yml`
 - id: verdent-report
   name: '@jarvis/dsh-verdent-report'
   config:
-    memoryDir: '~/.dsh/manager-memory'
+    memoryDir: 'C:\Users\<you>\.dsh\manager-memory'
     role: verifier
     requireReportPresets: [verifier-verdent]
 ```
@@ -180,7 +180,7 @@ FINDINGS.md       full empirical report (426 runs, 117 issues)
 
 ## License
 
-MIT
+[MIT](LICENSE)
 
 <div align="center">
 <br>
