@@ -1,103 +1,149 @@
-⚡ LockStep: Battle-Tested Guardrails for DeepSeek Harness
+<div align="center">
 
-Distilled from reverse-engineering 7 agent runtimes and stress-tested across 2.6M tokens under high-concurrency swarm load. Zero-dependency plugins that eliminate context rot, data loss, and fake "Done" states.
+# ⚡ LockStep
 
-Zero Dependencies
-Tested with DeepSeek
-Tests
-License
+### Battle-tested guardrails for DeepSeek Harness agent swarms
 
-🔬 The Lineage: From Reverse Engineering to DeepSeek
+**Two zero-dependency plugins that stop context rot, lost writes, and fake "Done" reports,<br>distilled from reverse-engineering 7 agent runtimes and 2.6M tokens of swarm stress tests.**
 
-Most multi-agent frameworks look great in single-turn demos but disintegrate when real agent squads run in parallel.
+[![Zero dependencies](https://img.shields.io/badge/dependencies-0-brightgreen?style=flat-square)](#-quick-start)
+[![Tested with DeepSeek](https://img.shields.io/badge/tested%20with-DeepSeek%20Harness-4D6BFE?style=flat-square)](#-the-numbers)
+[![Tests](https://img.shields.io/badge/tests-31-brightgreen?style=flat-square)](#-quick-start)
+[![Node](https://img.shields.io/badge/node-%E2%89%A5%2022.13-339933?style=flat-square&logo=node.js&logoColor=white)](#requirements)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](#license)
 
-Before writing a single line of code, we reverse-engineered the execution loops and failure states of the most prominent agent runtimes:
+**-99.8%** manager context &nbsp;·&nbsp; **0 / 500** failed parallel writes &nbsp;·&nbsp; **0 / 200** lessons lost &nbsp;·&nbsp; **0** wasted retries on outages
 
-Hermes & Droid: Tool dispatching and state-isolation models.
-Pi, Omo & Jeve: Context budgeting and multi-turn reminder mechanics.
-LiveOS & Verdent: Crash-resilient file persistence and strict verification hierarchies.
+[The numbers](#-the-numbers) · [How it works](#%EF%B8%8F-how-it-works) · [Quick start](#-quick-start) · [Full findings](FINDINGS.md) · [Ready-made configs](presets/README.md)
 
-When DeepSeek Harness proved its speed and clean architecture, we benchmarked it against our findings, extracted the highest-performing architectural primitives across all 7 runtimes, and packaged them as two non-invasive, zero-dependency plugins:
+</div>
 
-verdent-report: Strict schema gating, auto-downgrading fake "done" reports, "Record, Don't Refuse" trimming, atomic Windows/OneDrive file sync, and self-healing playbook libraries.
-model-fallback: Turn-boundary model switching with shared fleet outage memory (zero token waste when APIs rate-limit).
-📊 The 2.6M Token Stress Test (The Numbers)
+---
 
-To find where real-world multi-agent harnesses fail, we subjected the architecture to 426 test runs across 5 parallel tester agents and 3 panel reviewers, burning ~2.6 million tokens under stochastic swarm conditions.
+## The problem
 
-Here is what the harness did before vs. after our guardrails:
+Most multi-agent frameworks look great in single-turn demos and fall apart once a real squad runs in parallel:
 
-Vector	Stock / Naive Harness	With LockStep Guardrails	Measured Improvement
-Manager Context Bloat	Up to 316,000 tokens per report	
-≤
-≤ 500 tokens (
-≤
-≤ 2,000 chars)	-99.84% token reduction
-Playbook Search Blast	~13,000 tokens (raw file dumps)	~150 tokens (metadata only)	-98.8% token reduction
-Tool Error Payloads	Up to 1,000,000 chars echoed	
-≤
-≤ 250 chars	-99.97% token reduction
-Parallel Task Writes	457 of 500 failed (91.4% failure)	0 of 500 failed (0% failure)	100% write reliability
-Institutional Memory Retention	184 of 200 lessons lost (92% loss)	0 of 200 lessons lost (0% loss)	Zero knowledge loss
-Provider 429/500 Swarm Cascade	15 wasted retries across 5 agents	0 wasted retries (Fleet memory)	Instant failover
-Mid-Step Model Switch	Fatal host crash	Turn-boundary recovery	100% run continuity
-Playbook Search Latency (1k files)	Unindexed re-read of disk	24 ms warm / 237 ms cold	Instant sub-second lookup
+- 🧠 **Context rot.** One `read_task_report` dumps 316k tokens into the manager, which then starts hallucinating completions.
+- 💥 **Lost work.** Agents saving at the same moment collide on Windows file locks and OneDrive sync, and **91% of writes fail**.
+- 🎭 **Fake "Done".** Workers mark tasks complete while skipping criteria, and broken steps get saved as playbooks that poison later runs.
+- 🔁 **Retry storms.** When the provider rate-limits, every agent burns its own retry loop against the same dead endpoint.
 
-👉 Read the Full Empirical Report (FINDINGS.md) for detailed post-mortems of all 117 cataloged issues.
+LockStep fixes all four with two drop-in plugins.
 
-🏗️ Architecture
-1. "Record, Don't Refuse"
+| Plugin | What it does |
+|---|---|
+| **`verdent-report`** | Strict report schema, auto-downgrades fake `done` to `partial`, "Record, Don't Refuse" trimming, atomic crash-safe writes, and a self-healing playbook library |
+| **`model-fallback`** | Turn-boundary model switching with **fleet-wide outage memory**: once one agent hits a 429, every agent switches before wasting a call |
 
-Traditional harnesses reject malformed or slightly oversized agent outputs, forcing the model to rewrite entire 2,000-token reports (burning cash and increasing hallucination rates). LockStep trims and records (summaries to 300 chars, evidence to 1,000 chars), saving everything that can be salvaged and refusing only fatal schema breaks with an actionable, one-line fix.
+## 📊 The numbers
 
-2. Atomic Crash-Proof Persistence
+**426 test runs** · **5 parallel tester agents** · **3 review panels** · **~2.6M tokens** under stochastic swarm load, followed by multi-day live production runs.
 
-Windows filesystem locks, OneDrive sync, and high-concurrency swarms frequently collide when agents save simultaneously. LockStep uses randomized atomic temporary files and sequences writes so lessons are committed to disk before reports are finalized—ensuring hard-won insights survive even if the process dies.
+| Failure vector | Naive harness | With LockStep | Improvement |
+|---|---|---|---|
+| Manager context per report | up to **316,000** tokens | ≤ **500** tokens (≤ 2,000 chars) | **-99.84%** |
+| Playbook search blast | ~13,000 tokens (raw file dumps) | ~150 tokens (metadata only) | **-98.8%** |
+| Tool error payloads | up to **1,000,000** chars echoed | ≤ **250** chars | **-99.97%** |
+| Parallel task writes | **457 / 500 failed** (91.4%) | **0 / 500** failed | 100% write reliability |
+| Institutional memory | **184 / 200** lessons lost (92%) | **0 / 200** lost | Zero knowledge loss |
+| Provider 429/500 cascade | 15 wasted retries across 5 agents | **0** wasted retries | Instant failover |
+| Mid-step model switch | 💀 Fatal host crash | Turn-boundary recovery | 100% run continuity |
+| Playbook search (1k files) | Unindexed disk re-read | **24 ms** warm / 237 ms cold | Sub-second lookup |
 
-3. Fleet Outage Memory
+> 👉 **[Read the full empirical report](FINDINGS.md)**: methodology, post-mortems and all 117 cataloged issues.
 
-When an API provider rate-limits, typical agent swarms trigger separate retry loops on every active agent. LockStep tracks outage state across the entire process: when Agent 1 hits an outage, all other agents switch to the backup model on their very next step before burning tokens on failed retries.
+## 🔬 Where it came from
 
-📦 Quick Start
-Requirements
-Node.js 
-≥
-≥ 22.13
-DeepSeek Harness 
-≥
-≥ v0.2.1-rc.3 (Full fallback features require v0.2.2-alpha.2+)
-1. Build & Run Tests
-bash
-# Zero external dependencies
-node build.mjs
+Before writing any code, we reverse-engineered the execution loops and failure modes of seven agent runtimes:
+
+| Runtime | What we studied |
+|---|---|
+| **Hermes** & **Droid** | Tool dispatching and state isolation |
+| **Pi**, **Omo** & **Jeve** | Context budgeting and multi-turn reminder mechanics |
+| **LiveOS** & **Verdent** | Crash-resilient persistence and strict verification hierarchies |
+
+Then we benchmarked DeepSeek Harness against those findings and packaged the best primitives from all seven runtimes as plugins that don't touch the harness itself.
+
+## 🏗️ How it works
+
+### 1. Record, don't refuse
+
+Typical harnesses reject a slightly oversized or malformed report and force the model to rewrite all 2,000 tokens, which costs money and adds hallucinations. LockStep **trims and records** instead (summary to 300 chars, evidence to 1,000). It refuses only fatal schema breaks, and then with a one-line fix the agent can act on.
+
+### 2. Atomic, crash-proof persistence
+
+High-entropy temp file names, exponential backoff, and **inverted write order**: lessons go to disk *before* the report is finalized, so they survive even if the process dies mid-task.
+
+### 3. Fleet outage memory
+
+```
+Agent 1 ──► 429 from deepseek-v4-pro ──► outage recorded (cooldown 5 min)
+Agent 2 ──► next turn ──► sees outage ──► runs on deepseek-flash ✅  (no wasted call)
+Agent 3 ──► next turn ──► sees outage ──► runs on deepseek-flash ✅
+```
+
+The switch happens only **at turn boundaries**. DeepSeek fixes the model during step preparation, so swapping mid-step crashes the host.
+
+### 4. Verified playbooks only
+
+A playbook is saved only when a Verifier passes **100%** of the worker's criteria. Any later FAIL retires it to `playbooks/.retired/`. Bad steps never make it into the library.
+
+## 🚀 Quick start
+
+### Requirements
+
+- **Node.js** ≥ 22.13
+- **DeepSeek Harness** ≥ v0.2.1-rc.3 (full fallback features need ≥ v0.2.2-alpha.2)
+
+### 1. Build and test
+
+```bash
+git clone https://github.com/jlew23/LockStep-and-Two-smoking-LLMs.git
+cd LockStep-and-Two-smoking-LLMs
+node build.mjs   # zero external dependencies
 node test.mjs
-2. Mount in Your Harness Presets
+```
 
-Add the plugins to your DeepSeek Harness configuration (e.g., presets.patch.yml):
+### 2. Mount in your harness presets
 
-yaml
-# Worker Preset Plugins
-- id: verdent-report
-  name: '@jarvis/dsh-verdent-report'
-  config:
-    memoryDir: '~/.dsh/manager-memory'
-    role: worker
-    requireReportPresets: [worker-verdent]
-# Verifier Preset Plugins
-- id: verdent-report
-  name: '@jarvis/dsh-verdent-report'
-  config:
-    memoryDir: '~/.dsh/manager-memory'
-    role: verifier
-    requireReportPresets: [verifier-verdent]
-# Manager Preset Plugins
+Add the plugins to your DeepSeek Harness config (for example `presets.patch.yml`):
+
+<details open>
+<summary><b>Per-preset plugins</b> (Manager / Worker / Verifier)</summary>
+
+```yaml
+# Manager preset
 - id: verdent-report
   name: '@jarvis/dsh-verdent-report'
   config:
     memoryDir: '~/.dsh/manager-memory'
     role: manager
     requireReportPresets: [manager-verdent]
-# Global Fallback Plugin
+
+# Worker preset
+- id: verdent-report
+  name: '@jarvis/dsh-verdent-report'
+  config:
+    memoryDir: '~/.dsh/manager-memory'
+    role: worker
+    requireReportPresets: [worker-verdent]
+
+# Verifier preset
+- id: verdent-report
+  name: '@jarvis/dsh-verdent-report'
+  config:
+    memoryDir: '~/.dsh/manager-memory'
+    role: verifier
+    requireReportPresets: [verifier-verdent]
+```
+
+</details>
+
+<details open>
+<summary><b>Global fallback plugin</b></summary>
+
+```yaml
 - insert:
     - id: model-fallback
       name: '@jarvis/dsh-model-fallback'
@@ -105,11 +151,38 @@ yaml
         chains:
           deepseek-v4-pro: [deepseek-flash]
           deepseek-flash: [deepseek-v4-pro]
-        cooldownMs: 300000
-📜 Agent Prompt Directives
+        cooldownMs: 300000   # 5 min outage memory
+```
 
-To get maximum performance out of the guardrails, inject these minimal rules into your role prompts:
+</details>
 
-Manager: Start tasks with task_id: <unique_id> and 3–7 verifiable criteria. Use find_playbooks_v1 and recent_lessons_v1 before planning work. Read results via read_task_report_v1.
-Worker: Read referenced guides using read_playbook_v1. Keep criteria in your active checklist. Submit deliverables via submit_worker_report_v1 with concrete evidence.
-Verifier: Validate every single criterion. Grade all items using submit_verdict_v1.
+> 💡 Not sure which setup you need? **[presets/README.md](presets/README.md)** has six ready-made configs (Solo, Team, Team cheap, Strict, Overnight, Test bench) with measured token costs for each.
+
+### 3. Add the prompt directives
+
+Put these short rules in your role prompts to get the most out of the guardrails:
+
+| Role | Directive |
+|---|---|
+| **Manager** | Start tasks with `task_id: <unique_id>` and 3–7 verifiable criteria. Call `find_playbooks_v1` and `recent_lessons_v1` before planning. Read results via `read_task_report_v1`. |
+| **Worker** | Read referenced guides with `read_playbook_v1`. Keep the criteria in your active checklist. Submit via `submit_worker_report_v1` with concrete evidence. |
+| **Verifier** | Check every criterion. Grade all items with `submit_verdict_v1`. |
+
+## 📁 Repo layout
+
+```
+verdent-report/   strict reports, stop check, lessons log, playbook library
+model-fallback/   turn-boundary failover + fleet outage memory
+presets/          six ready-made configs with measured costs
+tests/            fake DeepSeek host + smoke tests
+FINDINGS.md       full empirical report (426 runs, 117 issues)
+```
+
+## License
+
+MIT
+
+<div align="center">
+<br>
+<sub>If LockStep saved your swarm from itself, a ⭐ helps other people find it.</sub>
+</div>
