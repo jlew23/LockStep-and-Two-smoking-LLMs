@@ -12,16 +12,20 @@ This document records the methodology, benchmark metrics, failure modes, and arc
 
 Across two rounds of automated squad testing, independent panel triage, and days of live execution under real production workloads, we evaluated the architecture for concurrency robustness, context efficiency, host-engine compliance and institutional-memory persistence.
 
-| Stress vector | Baseline (naive harness) | Hardened (LockStep) | Measured impact |
+| Stress vector | Baseline (early plugin build) | Hardened (LockStep) | Measured impact |
 |---|---|---|---|
 | Max task report context | ~316,000 tokens | ≤ 500 tokens (≤ 2,000 chars) | **-99.84%** tokens |
 | Playbook search blast | ~13,000 tokens (raw markdown) | ~150 tokens (metadata outline) | **-98.8%** tokens |
 | Tool payload echo | Up to 1,000,000 chars | ≤ 250 chars | **-99.97%** tokens |
 | High-concurrency writes | 457 / 500 failed (91.4%) | 0 / 500 failed (0%) | **Zero write loss** |
 | Lesson log retention | 184 / 200 lost (92.0%) | 0 / 200 lost (0%) | **100% memory survival** |
-| 429/503 swarm retries | 15 failed retries per incident | 0 retries (fleet outage memory) | **Instant failover** |
+| 429/503 swarm retries | 15 failed retries per incident | first step still fails; later turns run on the backup | **No retry storm for the rest of the fleet** |
 | Host run stability | Mid-step switch → fatal crash | Turn-boundary recovery | **100% run continuity** |
 | Playbook search latency | Unindexed disk traversal | 24 ms warm / 237 ms cold | **Sub-second at 1k files** |
+
+**What "baseline" means here.** The baseline column is the first version of these plugins under the stress tests, before atomic writes, output caps and disk checks were added. It is **not** stock DeepSeek Harness, and the README's numbers table says so too. The improvement is "early build vs hardened build", not "no plugins vs plugins".
+
+**One correction to the retry row.** The agent whose step hits the outage still pays that step's retries; only the other agents skip theirs by switching at their next step boundary. See `model-fallback/src/index.ts` and the demo's fourth scene.
 
 ## 2. Testing methodology: the squad review
 
@@ -104,4 +108,6 @@ $ node build.mjs && node test.mjs
 
 - ✔ Zero external npm dependencies
 - ✔ Pure TypeScript core logic, decoupled from harness bindings
-- ✔ Verified under multi-day live swarm production runs
+- ✔ Reported from multi-day live swarm runs on Windows (raw logs are not published in this repo)
+
+Test count: 25 + 16 = **41** (the 16 integration tests are the 11 smoke tests plus the 5 evidence-check tests). The suite runs on the stand-in host in `tests/fake-host.mjs`, not the real harness. See the README's "What is tested and what is not" table for what has and has not been verified live.
